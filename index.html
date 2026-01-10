@@ -1,0 +1,610 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ТРВП-009 — Склад / Заказы</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    body { margin: 0; background: #f6f7fb; color: #111; }
+    header { padding: 14px 18px; background: #fff; border-bottom: 1px solid #e6e8ef; display: flex; gap: 12px; align-items: center; position: sticky; top: 0; z-index: 10; }
+    header .spacer { flex: 1; }
+    .pill { display:inline-block; font-size: 12px; padding: 2px 8px; border: 1px solid #e6e8ef; border-radius: 999px; background: #fafbff; }
+    nav { display:flex; gap: 8px; flex-wrap: wrap; }
+    nav a { text-decoration:none; color:#111; border:1px solid #d7dbe7; padding:8px 10px; border-radius:10px; background:#fff; font-size: 13px; }
+    nav a.active { background:#111; color:#fff; border-color:#111; }
+
+    main { max-width: 1100px; margin: 0 auto; padding: 14px; }
+    .card { background: #fff; border: 1px solid #e6e8ef; border-radius: 12px; padding: 12px; box-shadow: 0 1px 2px rgba(0,0,0,.03); }
+    .stack { display:flex; flex-direction: column; gap: 14px; }
+
+    h2 { margin: 0 0 10px; font-size: 16px; }
+    label { display: block; font-size: 12px; color: #444; margin: 8px 0 4px; }
+    input, select, button { font: inherit; }
+    input, select { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #d7dbe7; border-radius: 10px; background: #fff; }
+    button { padding: 8px 10px; border-radius: 10px; border: 1px solid #d7dbe7; background: #fff; cursor: pointer; }
+    button.primary { background: #111; color: #fff; border-color: #111; }
+    button.danger { background: #b42318; color: #fff; border-color: #b42318; }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .row3 { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 10px; align-items: end; }
+    .muted { color: #666; font-size: 12px; }
+    .hr { height: 1px; background: #eef0f6; margin: 12px 0; }
+
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #eef0f6; font-size: 13px; vertical-align: top; }
+    tr:hover td { background: #fafbff; }
+    .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    pre { white-space: pre-wrap; background:#0b1220; color:#e6edf3; padding:10px; border-radius:10px; font-size:12px; overflow:auto; }
+
+    .toast { position: fixed; right: 12px; bottom: 12px; max-width: 520px; background: #111; color: #fff; padding: 10px 12px; border-radius: 12px; opacity: 0; transform: translateY(10px); transition: .2s; }
+    .toast.show { opacity: 1; transform: translateY(0); }
+  </style>
+</head>
+<body>
+<header>
+  <strong>Склад — ТРВП-009</strong>
+  <span class="pill" id="currentDatePill">Текущая дата: …</span>
+
+  <div class="spacer"></div>
+
+  <nav>
+    <a href="#/orders" id="navOrders">Заказы</a>
+    <a href="#/products" id="navProducts">Товары</a>
+    <a href="#/ops" id="navOps">Операции</a>
+    <a href="#/logs" id="navLogs">Логи</a>
+  </nav>
+</header>
+
+<main>
+  <div class="stack">
+
+    <!-- PAGE: Orders -->
+    <section class="card" id="pageOrders" style="display:none;">
+      <h2>Заказы</h2>
+      <div class="muted">Создание и просмотр списка. Открытие заказа ведёт на отдельную страницу.</div>
+
+      <div class="hr"></div>
+
+      <h2>Создать заказ</h2>
+      <label>ФИО заказчика</label>
+      <input id="newCustomer" placeholder="Иванов Иван Иванович" />
+      <label>Дата заказа (YYYY-MM-DD)</label>
+      <input id="newDate" />
+      <div class="actions" style="margin-top:10px;">
+        <button class="primary" id="createOrderBtn">Создать</button>
+        <span class="muted" id="ordersCount"></span>
+      </div>
+
+      <div class="hr"></div>
+
+      <h2>Список заказов</h2>
+      <div style="max-height: 520px; overflow:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Дата</th>
+              <th>ФИО</th>
+              <th>Позиции</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="ordersTbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- PAGE: Order -->
+    <section class="card" id="pageOrder" style="display:none;">
+      <h2>Заказ</h2>
+      <div class="muted">ID: <span id="orderIdText"></span></div>
+
+      <div class="row" style="margin-top:8px;">
+        <div>
+          <label>ФИО заказчика</label>
+          <input id="editCustomer" />
+        </div>
+        <div>
+          <label>Дата заказа</label>
+          <input id="editDate" />
+        </div>
+      </div>
+
+      <div class="actions" style="margin-top:10px;">
+        <button class="primary" id="saveOrderBtn">Сохранить</button>
+        <button class="danger" id="deleteOrderBtn">Удалить заказ</button>
+        <a href="#/orders" style="text-decoration:none;"><button>← Назад к заказам</button></a>
+      </div>
+
+      <div class="hr"></div>
+
+      <h2>Добавить позицию</h2>
+      <div class="row3">
+        <div>
+          <label>Товар</label>
+          <select id="addProduct"></select>
+        </div>
+        <div>
+          <label>Кол-во</label>
+          <input id="addQty" type="number" min="1" value="1" />
+        </div>
+        <div>
+          <button class="primary" id="addItemBtn" style="width:100%;">Добавить</button>
+        </div>
+      </div>
+
+      <div class="hr"></div>
+
+      <h2>Позиции</h2>
+      <div class="muted">Если товара не хватает — операция отклоняется и показывается предупреждение.</div>
+      <div id="itemsWrap" style="margin-top:10px;"></div>
+    </section>
+
+    <!-- PAGE: Products -->
+    <section class="card" id="pageProducts" style="display:none;">
+      <h2>Товары и остатки</h2>
+      <div class="muted">Остатки меняются при “День вперёд” (отгрузка + случайный приход).</div>
+
+      <div class="hr"></div>
+
+      <div id="productsWrap"></div>
+    </section>
+
+    <!-- PAGE: Ops -->
+    <section class="card" id="pageOps" style="display:none;">
+      <h2>Операции</h2>
+      <div class="muted">Переключение текущей даты на день вперёд.</div>
+
+      <div class="hr"></div>
+
+      <div class="actions">
+        <button class="primary" id="advanceBtn">День вперёд</button>
+      </div>
+
+      <div class="hr"></div>
+
+      <h2>Результат последней операции</h2>
+      <pre id="opsPre">—</pre>
+    </section>
+
+    <!-- PAGE: Logs -->
+    <section class="card" id="pageLogs" style="display:none;">
+      <h2>Логи</h2>
+      <div class="muted">Сюда пишется JSON последней успешной операции/ответа сервера. Ошибки тоже попадают в toast.</div>
+
+      <div class="hr"></div>
+
+      <pre id="debugPre">—</pre>
+    </section>
+
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+
+  let state = {
+    currentDate: null,
+    products: [],
+    orders: [],
+    selectedOrder: null, // full order with items
+    lastDebug: null,
+    lastOps: null,
+  };
+
+  function toast(msg) {
+    const t = $("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    setTimeout(() => t.classList.remove("show"), 2600);
+  }
+
+  function setDebug(obj) {
+    state.lastDebug = obj;
+    $("debugPre").textContent = obj ? JSON.stringify(obj, null, 2) : "—";
+  }
+
+  function setOps(obj) {
+    state.lastOps = obj;
+    $("opsPre").textContent = obj ? JSON.stringify(obj, null, 2) : "—";
+  }
+
+  async function api(path, options = {}) {
+    const res = await fetch(path, {
+      headers: { "Content-Type": "application/json" },
+      ...options,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg = data?.error || `HTTP ${res.status}`;
+      const details = data?.details ? "\n" + JSON.stringify(data.details, null, 2) : "";
+      throw new Error(msg + details);
+    }
+    return data;
+  }
+
+  function shortId(id) { return id ? id.slice(0, 8) + "…" : ""; }
+
+  // -------- data loaders --------
+  async function loadMeta() {
+    const meta = await api("/api/meta");
+    state.currentDate = meta.currentDate;
+    $("currentDatePill").textContent = "Текущая дата: " + state.currentDate;
+    $("newDate").value = state.currentDate || "";
+  }
+
+  async function loadProducts() {
+    state.products = await api("/api/products");
+  }
+
+  async function loadOrders() {
+    state.orders = await api("/api/orders");
+  }
+
+  async function loadOrder(orderId) {
+    state.selectedOrder = await api(`/api/orders/${orderId}`);
+  }
+
+  // -------- renders --------
+  function renderNav(active) {
+    const map = {
+      orders: "navOrders",
+      products: "navProducts",
+      ops: "navOps",
+      logs: "navLogs",
+      order: "navOrders", // заказ — это часть раздела "Заказы"
+    };
+    ["navOrders","navProducts","navOps","navLogs"].forEach(id => $(id).classList.remove("active"));
+    $(map[active] || "navOrders").classList.add("active");
+  }
+
+  function hideAllPages() {
+    ["pageOrders","pageOrder","pageProducts","pageOps","pageLogs"].forEach(id => $(id).style.display = "none");
+  }
+
+  function renderOrdersPage() {
+    $("ordersCount").textContent = `Всего заказов: ${state.orders.length}`;
+
+    const tbody = $("ordersTbody");
+    tbody.innerHTML = "";
+
+    for (const o of state.orders) {
+      const tr = document.createElement("tr");
+
+      tr.innerHTML = `
+        <td>${o.orderDate}</td>
+        <td>${o.customerName}</td>
+        <td>${o.itemsCount}</td>
+        <td></td>
+      `;
+
+      const tdAct = tr.lastElementChild;
+      const act = document.createElement("div");
+      act.className = "actions";
+
+      const openBtn = document.createElement("button");
+      openBtn.textContent = "Открыть";
+      openBtn.onclick = () => { location.hash = `#/order/${o.id}`; };
+
+      const delBtn = document.createElement("button");
+      delBtn.textContent = "Удалить";
+      delBtn.className = "danger";
+      delBtn.onclick = async () => {
+        if (!confirm("Удалить заказ?")) return;
+        try {
+          const r = await api(`/api/orders/${o.id}`, { method: "DELETE" });
+          setDebug(r);
+          toast("Заказ удалён");
+          await refreshCore();
+          renderOrdersPage();
+        } catch (e) { toast(e.message); setDebug({ error: e.message }); }
+      };
+
+      act.appendChild(openBtn);
+      act.appendChild(delBtn);
+      tdAct.appendChild(act);
+
+      tbody.appendChild(tr);
+    }
+  }
+
+  function renderProductsPage() {
+    const wrap = $("productsWrap");
+    const rows = state.products.map(p => `
+      <tr>
+        <td>${p.name}</td>
+        <td>${shortId(p.id)}</td>
+        <td>${p.stock}</td>
+      </tr>
+    `).join("");
+
+    wrap.innerHTML = `
+      <table>
+        <thead><tr><th>Товар</th><th>ID</th><th>Остаток</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  }
+
+  function renderOrderPage() {
+    const order = state.selectedOrder;
+    if (!order) return;
+
+    $("orderIdText").textContent = order.id;
+    $("editCustomer").value = order.customerName;
+    $("editDate").value = order.orderDate;
+
+    // product select for adding
+    const sel = $("addProduct");
+    sel.innerHTML = "";
+    for (const p of state.products) {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      opt.textContent = `${p.name} (остаток: ${p.stock})`;
+      sel.appendChild(opt);
+    }
+
+    const wrap = $("itemsWrap");
+    if (!order.items.length) {
+      wrap.innerHTML = `<div class="muted">Пока нет позиций.</div>`;
+      return;
+    }
+
+    const otherOrders = state.orders.filter(o => o.id !== order.id);
+
+    wrap.innerHTML = order.items.map(item => {
+      const productOptions = state.products.map(p => {
+        const sel = p.id === item.productId ? "selected" : "";
+        return `<option value="${p.id}" ${sel}>${p.name} (ост: ${p.stock})</option>`;
+      }).join("");
+
+      const moveOptions = otherOrders.map(o => `<option value="${o.id}">${o.orderDate} — ${o.customerName} (${shortId(o.id)})</option>`).join("");
+
+      return `
+        <div class="card" style="margin-bottom:10px;">
+          <div class="muted">Item ID: ${item.id}</div>
+
+          <div class="row3" style="margin-top:8px;">
+            <div>
+              <label>Товар</label>
+              <select data-role="prod" data-item="${item.id}">${productOptions}</select>
+            </div>
+            <div>
+              <label>Кол-во</label>
+              <input data-role="qty" data-item="${item.id}" type="number" min="1" value="${item.qty}" />
+            </div>
+            <div class="actions" style="justify-content:flex-end;">
+              <button class="primary" data-role="upd" data-item="${item.id}">Обновить</button>
+              <button class="danger" data-role="del" data-item="${item.id}">Удалить</button>
+            </div>
+          </div>
+
+          <div class="row3" style="margin-top:10px;">
+            <div>
+              <label>Перевести позицию в другой заказ</label>
+              <select data-role="moveTo" data-item="${item.id}">
+                <option value="">— выбрать —</option>
+                ${moveOptions}
+              </select>
+            </div>
+            <div></div>
+            <div>
+              <button data-role="moveBtn" data-item="${item.id}" style="width:100%;">Перевести</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    // handlers
+    wrap.querySelectorAll('button[data-role="upd"]').forEach(btn => {
+      btn.onclick = async () => {
+        const itemId = btn.dataset.item;
+        const prod = wrap.querySelector(`select[data-role="prod"][data-item="${itemId}"]`).value;
+        const qty = Number(wrap.querySelector(`input[data-role="qty"][data-item="${itemId}"]`).value);
+
+        try {
+          const updated = await api(`/api/orders/${order.id}/items/${itemId}`, {
+            method: "PUT",
+            body: JSON.stringify({ productId: prod, qty }),
+          });
+          setDebug(updated);
+          toast("Позиция обновлена");
+          await refreshCore();
+          await loadOrder(order.id);
+          renderOrderPage();
+        } catch (e) { toast(e.message); setDebug({ error: e.message }); }
+      };
+    });
+
+    wrap.querySelectorAll('button[data-role="del"]').forEach(btn => {
+      btn.onclick = async () => {
+        const itemId = btn.dataset.item;
+        if (!confirm("Удалить позицию?")) return;
+
+        try {
+          const updated = await api(`/api/orders/${order.id}/items/${itemId}`, { method: "DELETE" });
+          setDebug(updated);
+          toast("Позиция удалена");
+          await refreshCore();
+          await loadOrder(order.id);
+          renderOrderPage();
+        } catch (e) { toast(e.message); setDebug({ error: e.message }); }
+      };
+    });
+
+    wrap.querySelectorAll('button[data-role="moveBtn"]').forEach(btn => {
+      btn.onclick = async () => {
+        const itemId = btn.dataset.item;
+        const toOrderId = wrap.querySelector(`select[data-role="moveTo"][data-item="${itemId}"]`).value;
+        if (!toOrderId) return toast("Выбери целевой заказ");
+
+        try {
+          const movedTo = await api(`/api/order-items/${itemId}/move`, {
+            method: "POST",
+            body: JSON.stringify({ toOrderId }),
+          });
+          setDebug(movedTo);
+          toast("Позиция перенесена");
+          // переходим в целевой заказ
+          location.hash = `#/order/${toOrderId}`;
+        } catch (e) { toast(e.message); setDebug({ error: e.message }); }
+      };
+    });
+  }
+
+  // -------- core refresh (meta/products/orders) --------
+  async function refreshCore() {
+    await loadMeta();
+    await loadProducts();
+    await loadOrders();
+  }
+
+  // -------- router --------
+  async function route() {
+    const hash = location.hash || "#/orders";
+    const parts = hash.replace(/^#\//, "").split("/"); // e.g. ["order","<id>"]
+    const page = parts[0] || "orders";
+
+    try {
+      // всегда держим meta/products/orders актуальными
+      await refreshCore();
+      renderNav(page === "order" ? "order" : page);
+
+      hideAllPages();
+
+      if (page === "orders") {
+        $("pageOrders").style.display = "block";
+        renderOrdersPage();
+        return;
+      }
+
+      if (page === "products") {
+        $("pageProducts").style.display = "block";
+        renderProductsPage();
+        return;
+      }
+
+      if (page === "ops") {
+        $("pageOps").style.display = "block";
+        // просто показываем последнее ops (если было)
+        setOps(state.lastOps);
+        return;
+      }
+
+      if (page === "logs") {
+        $("pageLogs").style.display = "block";
+        setDebug(state.lastDebug);
+        return;
+      }
+
+      if (page === "order") {
+        const orderId = parts[1];
+        if (!orderId) { location.hash = "#/orders"; return; }
+
+        await loadOrder(orderId);
+
+        $("pageOrder").style.display = "block";
+        renderOrderPage();
+        return;
+      }
+
+      // default
+      location.hash = "#/orders";
+    } catch (e) {
+      toast(e.message);
+      setDebug({ error: e.message });
+      hideAllPages();
+      $("pageLogs").style.display = "block";
+      renderNav("logs");
+    }
+  }
+
+  // -------- actions --------
+  $("createOrderBtn").onclick = async () => {
+    const customerName = $("newCustomer").value.trim();
+    const orderDate = $("newDate").value.trim();
+    try {
+      const created = await api("/api/orders", {
+        method: "POST",
+        body: JSON.stringify({ customerName, orderDate }),
+      });
+      setDebug(created);
+      toast("Заказ создан");
+      $("newCustomer").value = "";
+      location.hash = `#/order/${created.id}`;
+    } catch (e) { toast(e.message); setDebug({ error: e.message }); }
+  };
+
+  $("saveOrderBtn").onclick = async () => {
+    const order = state.selectedOrder;
+    if (!order) return;
+    const customerName = $("editCustomer").value.trim();
+    const orderDate = $("editDate").value.trim();
+
+    try {
+      const updated = await api(`/api/orders/${order.id}`, {
+        method: "PUT",
+        body: JSON.stringify({ customerName, orderDate }),
+      });
+      setDebug(updated);
+      toast("Заказ обновлён");
+      await route();
+    } catch (e) { toast(e.message); setDebug({ error: e.message }); }
+  };
+
+  $("deleteOrderBtn").onclick = async () => {
+    const order = state.selectedOrder;
+    if (!order) return;
+    if (!confirm("Удалить заказ?")) return;
+
+    try {
+      const r = await api(`/api/orders/${order.id}`, { method: "DELETE" });
+      setDebug(r);
+      toast("Заказ удалён");
+      location.hash = "#/orders";
+    } catch (e) { toast(e.message); setDebug({ error: e.message }); }
+  };
+
+  $("addItemBtn").onclick = async () => {
+    const order = state.selectedOrder;
+    if (!order) return;
+    const productId = $("addProduct").value;
+    const qty = Number($("addQty").value);
+
+    try {
+      const updated = await api(`/api/orders/${order.id}/items`, {
+        method: "POST",
+        body: JSON.stringify({ productId, qty }),
+      });
+      setDebug(updated);
+      toast("Позиция добавлена");
+      await refreshCore();
+      await loadOrder(order.id);
+      renderOrderPage();
+    } catch (e) { toast(e.message); setDebug({ error: e.message }); }
+  };
+
+  $("advanceBtn").onclick = async () => {
+    if (!confirm("Переключить текущую дату на день вперёд?\nЗаказы на текущий день будут отгружены и удалены.")) return;
+    try {
+      const r = await api("/api/meta/advance-day", { method: "POST" });
+      setOps(r);
+      setDebug(r);
+      toast(`День: ${r.previousDate} → ${r.currentDate}. Отгружено заказов: ${r.shippedOrdersCount}`);
+      // остаёмся на странице ops, просто обновим core и рендер
+      location.hash = "#/ops";
+      await route();
+    } catch (e) { toast(e.message); setDebug({ error: e.message }); }
+  };
+
+  // start
+  window.addEventListener("hashchange", route);
+  if (!location.hash) location.hash = "#/orders";
+  route();
+</script>
+</body>
+</html>
