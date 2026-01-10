@@ -4,7 +4,6 @@ const crypto = require("crypto");
 
 function uuid() {
   if (crypto.randomUUID) return crypto.randomUUID();
-  // Fallback (очень редко понадобится)
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0;
     const v = c === "x" ? r : (r & 0x3) | 0x8;
@@ -17,7 +16,6 @@ function isISODate(s) {
 }
 
 function addDaysISO(dateStr, days) {
-  // Работаем в UTC, чтобы не ловить DST
   const d = new Date(dateStr + "T00:00:00Z");
   d.setUTCDate(d.getUTCDate() + days);
   const y = d.getUTCFullYear();
@@ -41,7 +39,6 @@ function openDb(file = "warehouse.db") {
 }
 
 function createRepo(db) {
-  // ---- schema ----
   db.exec(`
     CREATE TABLE IF NOT EXISTS meta (
       id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -73,7 +70,6 @@ function createRepo(db) {
     CREATE INDEX IF NOT EXISTS idx_items_product ON order_items(product_id);
   `);
 
-  // ---- prepared statements ----
   const st = {
     metaGet: db.prepare(`SELECT current_date AS currentDate FROM meta WHERE id=1`),
     metaSet: db.prepare(`INSERT INTO meta(id, current_date) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET current_date=excluded.current_date`),
@@ -133,7 +129,6 @@ function createRepo(db) {
   function ensureMeta() {
     let cd = getCurrentDate();
     if (!cd) {
-      // current date = today (UTC) in ISO date
       const now = new Date();
       const y = now.getUTCFullYear();
       const m = String(now.getUTCMonth() + 1).padStart(2, "0");
@@ -167,7 +162,6 @@ function createRepo(db) {
 
   function init() {
     const cd = ensureMeta();
-    // Удаляем заказы с истекшей датой при старте
     st.deleteExpiredOrders.run(cd);
     seedProductsIfEmpty();
     return { currentDate: cd };
@@ -276,7 +270,6 @@ function createRepo(db) {
 
     if (!Number.isInteger(newQty) || newQty < 1) throw new HttpError(400, "Количество должно быть целым числом >= 1");
 
-    // Проверяем доступность для нового товара, исключая текущую позицию (если товар тот же — корректно)
     checkAvailabilityOrThrow(newProductId, newQty, itemId);
 
     st.itemUpdate.run(newProductId, newQty, itemId);
@@ -309,8 +302,6 @@ function createRepo(db) {
     const toOrder = st.orderGet.get(toOrderId);
     if (!toOrder) throw new HttpError(404, "Целевой заказ не найден");
 
-    // Перенос не меняет общий резерв/остаток (qty и productId те же),
-    // поэтому доп.проверка наличия не нужна.
     st.itemUpdateOrder.run(toOrderId, itemId);
     return getOrderWithItems(toOrderId);
   });
@@ -323,16 +314,13 @@ function createRepo(db) {
   const txAdvanceDay = db.transaction(() => {
     const currentDate = ensureMeta();
 
-    // 1) Считаем отгрузку по товарам для заказов на текущую дату
     const ship = st.shipSumsForDate.all(currentDate);
 
-    // 2) Списываем со склада
     for (const row of ship) {
       const p = st.productGet.get(row.productId);
       if (!p) continue;
       const newStock = p.stock - row.totalQty;
 
-      // На всякий случай защита (вообще не должно случаться при корректных проверках)
       if (newStock < 0) {
         throw new HttpError(500, "Отрицательный остаток при отгрузке (проверь логику резерва)", {
           productId: row.productId,
@@ -343,26 +331,22 @@ function createRepo(db) {
       st.productUpdateStock.run(newStock, row.productId);
     }
 
-    // 3) Удаляем заказы текущего дня (позиции удалятся каскадом)
     const ordersToday = st.ordersForDate.all(currentDate);
     st.deleteOrdersForDate.run(currentDate);
 
-    // 4) Приход партий товара: случайное увеличение остатков
     const arrivals = {};
     const products = st.productList.all();
     for (const p of products) {
-      const delta = Math.floor(Math.random() * 6); // 0..5
+      const delta = Math.floor(Math.random() * 6);
       if (delta > 0) {
         st.productIncStock.run(delta, p.id);
         arrivals[p.id] = delta;
       }
     }
 
-    // 5) Сдвигаем дату
     const newDate = addDaysISO(currentDate, 1);
     st.metaSet.run(newDate);
 
-    // 6) На всякий случай чистим “просрочку” (если кто-то руками в БД напортачил)
     st.deleteExpiredOrders.run(newDate);
 
     return {

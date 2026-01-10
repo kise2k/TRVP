@@ -12,12 +12,10 @@ repo.init();
 const app = express();
 app.use(express.json());
 
-// ---- раздача UI ----
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
-// ---- helpers ----
 function ok(res, data) {
   res.json(data);
 }
@@ -31,7 +29,6 @@ function handleError(res, err) {
   res.status(500).json({ error: "Internal Server Error" });
 }
 
-// ---- Meta ----
 app.get("/api/meta", (req, res) => {
   try {
     ok(res, { currentDate: repo.getCurrentDate() });
@@ -48,7 +45,6 @@ app.post("/api/meta/advance-day", (req, res) => {
   }
 });
 
-// ---- Products ----
 app.get("/api/products", (req, res) => {
   try {
     ok(res, repo.listProducts());
@@ -57,7 +53,6 @@ app.get("/api/products", (req, res) => {
   }
 });
 
-// ---- Orders ----
 app.get("/api/orders", (req, res) => {
   try {
     ok(res, repo.listOrders());
@@ -98,7 +93,6 @@ app.delete("/api/orders/:id", (req, res) => {
   }
 });
 
-// ---- Items ----
 app.post("/api/orders/:id/items", (req, res) => {
   try {
     ok(res, repo.addItem(req.params.id, req.body));

@@ -60,7 +60,6 @@
 <main>
   <div class="stack">
 
-    <!-- PAGE: Orders -->
     <section class="card" id="pageOrders" style="display:none;">
       <h2>Заказы</h2>
       <div class="muted">Создание и просмотр списка. Открытие заказа ведёт на отдельную страницу.</div>
@@ -95,7 +94,6 @@
       </div>
     </section>
 
-    <!-- PAGE: Order -->
     <section class="card" id="pageOrder" style="display:none;">
       <h2>Заказ</h2>
       <div class="muted">ID: <span id="orderIdText"></span></div>
@@ -141,7 +139,6 @@
       <div id="itemsWrap" style="margin-top:10px;"></div>
     </section>
 
-    <!-- PAGE: Products -->
     <section class="card" id="pageProducts" style="display:none;">
       <h2>Товары и остатки</h2>
       <div class="muted">Остатки меняются при “День вперёд” (отгрузка + случайный приход).</div>
@@ -151,7 +148,6 @@
       <div id="productsWrap"></div>
     </section>
 
-    <!-- PAGE: Ops -->
     <section class="card" id="pageOps" style="display:none;">
       <h2>Операции</h2>
       <div class="muted">Переключение текущей даты на день вперёд.</div>
@@ -168,7 +164,6 @@
       <pre id="opsPre">—</pre>
     </section>
 
-    <!-- PAGE: Logs -->
     <section class="card" id="pageLogs" style="display:none;">
       <h2>Логи</h2>
       <div class="muted">Сюда пишется JSON последней успешной операции/ответа сервера. Ошибки тоже попадают в toast.</div>
@@ -190,7 +185,7 @@
     currentDate: null,
     products: [],
     orders: [],
-    selectedOrder: null, // full order with items
+    selectedOrder: null,
     lastDebug: null,
     lastOps: null,
   };
@@ -228,7 +223,6 @@
 
   function shortId(id) { return id ? id.slice(0, 8) + "…" : ""; }
 
-  // -------- data loaders --------
   async function loadMeta() {
     const meta = await api("/api/meta");
     state.currentDate = meta.currentDate;
@@ -248,14 +242,13 @@
     state.selectedOrder = await api(`/api/orders/${orderId}`);
   }
 
-  // -------- renders --------
   function renderNav(active) {
     const map = {
       orders: "navOrders",
       products: "navProducts",
       ops: "navOps",
       logs: "navLogs",
-      order: "navOrders", // заказ — это часть раздела "Заказы"
+      order: "navOrders",
     };
     ["navOrders","navProducts","navOps","navLogs"].forEach(id => $(id).classList.remove("active"));
     $(map[active] || "navOrders").classList.add("active");
@@ -337,7 +330,6 @@
     $("editCustomer").value = order.customerName;
     $("editDate").value = order.orderDate;
 
-    // product select for adding
     const sel = $("addProduct");
     sel.innerHTML = "";
     for (const p of state.products) {
@@ -399,7 +391,6 @@
       `;
     }).join("");
 
-    // handlers
     wrap.querySelectorAll('button[data-role="upd"]').forEach(btn => {
       btn.onclick = async () => {
         const itemId = btn.dataset.item;
@@ -449,28 +440,24 @@
           });
           setDebug(movedTo);
           toast("Позиция перенесена");
-          // переходим в целевой заказ
           location.hash = `#/order/${toOrderId}`;
         } catch (e) { toast(e.message); setDebug({ error: e.message }); }
       };
     });
   }
 
-  // -------- core refresh (meta/products/orders) --------
   async function refreshCore() {
     await loadMeta();
     await loadProducts();
     await loadOrders();
   }
 
-  // -------- router --------
   async function route() {
     const hash = location.hash || "#/orders";
-    const parts = hash.replace(/^#\//, "").split("/"); // e.g. ["order","<id>"]
+    const parts = hash.replace(/^#\//, "").split("/");
     const page = parts[0] || "orders";
 
     try {
-      // всегда держим meta/products/orders актуальными
       await refreshCore();
       renderNav(page === "order" ? "order" : page);
 
@@ -490,7 +477,6 @@
 
       if (page === "ops") {
         $("pageOps").style.display = "block";
-        // просто показываем последнее ops (если было)
         setOps(state.lastOps);
         return;
       }
@@ -512,7 +498,6 @@
         return;
       }
 
-      // default
       location.hash = "#/orders";
     } catch (e) {
       toast(e.message);
@@ -523,7 +508,6 @@
     }
   }
 
-  // -------- actions --------
   $("createOrderBtn").onclick = async () => {
     const customerName = $("newCustomer").value.trim();
     const orderDate = $("newDate").value.trim();
@@ -595,13 +579,11 @@
       setOps(r);
       setDebug(r);
       toast(`День: ${r.previousDate} → ${r.currentDate}. Отгружено заказов: ${r.shippedOrdersCount}`);
-      // остаёмся на странице ops, просто обновим core и рендер
       location.hash = "#/ops";
       await route();
     } catch (e) { toast(e.message); setDebug({ error: e.message }); }
   };
 
-  // start
   window.addEventListener("hashchange", route);
   if (!location.hash) location.hash = "#/orders";
   route();
