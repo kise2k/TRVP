@@ -1,3 +1,4 @@
+<!-- index.html -->
 <!doctype html>
 <html lang="ru">
 <head>
@@ -25,7 +26,6 @@
     button { padding: 8px 10px; border-radius: 10px; border: 1px solid #d7dbe7; background: #fff; cursor: pointer; }
     button.primary { background: #111; color: #fff; border-color: #111; }
     button.danger { background: #b42318; color: #fff; border-color: #b42318; }
-    button:disabled { opacity: .55; cursor: not-allowed; }
 
     .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .row3 { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 10px; align-items: end; }
@@ -60,9 +60,10 @@
 <main>
   <div class="stack">
 
+    <!-- Orders -->
     <section class="card" id="pageOrders" style="display:none;">
       <h2>Заказы</h2>
-      <div class="muted">Создание и просмотр списка. Открытие заказа ведёт на отдельную страницу.</div>
+      <div class="muted">Создание и список заказов. Открытие — отдельная страница заказа.</div>
 
       <div class="hr"></div>
 
@@ -94,6 +95,7 @@
       </div>
     </section>
 
+    <!-- Single Order -->
     <section class="card" id="pageOrder" style="display:none;">
       <h2>Заказ</h2>
       <div class="muted">ID: <span id="orderIdText"></span></div>
@@ -135,41 +137,39 @@
       <div class="hr"></div>
 
       <h2>Позиции</h2>
-      <div class="muted">Если товара не хватает — операция отклоняется и показывается предупреждение.</div>
+      <div class="muted">Если товара не хватает — операция отклоняется.</div>
       <div id="itemsWrap" style="margin-top:10px;"></div>
     </section>
 
+    <!-- Products -->
     <section class="card" id="pageProducts" style="display:none;">
       <h2>Товары и остатки</h2>
-      <div class="muted">Остатки меняются при “День вперёд” (отгрузка + случайный приход).</div>
-
+      <div class="muted">Остатки меняются при “День вперёд”.</div>
       <div class="hr"></div>
-
       <div id="productsWrap"></div>
     </section>
 
+    <!-- Ops -->
     <section class="card" id="pageOps" style="display:none;">
       <h2>Операции</h2>
-      <div class="muted">Переключение текущей даты на день вперёд.</div>
-
+      <div class="muted">Переключение текущей даты на день вперёд или возврат на сегодняшнюю.</div>
       <div class="hr"></div>
 
       <div class="actions">
         <button class="primary" id="advanceBtn">День вперёд</button>
+        <button id="resetTodayBtn">Перейти к сегодняшней дате</button>
       </div>
 
       <div class="hr"></div>
-
       <h2>Результат последней операции</h2>
       <pre id="opsPre">—</pre>
     </section>
 
+    <!-- Logs -->
     <section class="card" id="pageLogs" style="display:none;">
       <h2>Логи</h2>
-      <div class="muted">Сюда пишется JSON последней успешной операции/ответа сервера. Ошибки тоже попадают в toast.</div>
-
+      <div class="muted">JSON последней операции/ответа сервера.</div>
       <div class="hr"></div>
-
       <pre id="debugPre">—</pre>
     </section>
 
@@ -242,14 +242,14 @@
     state.selectedOrder = await api(`/api/orders/${orderId}`);
   }
 
+  async function refreshCore() {
+    await loadMeta();
+    await loadProducts();
+    await loadOrders();
+  }
+
   function renderNav(active) {
-    const map = {
-      orders: "navOrders",
-      products: "navProducts",
-      ops: "navOps",
-      logs: "navLogs",
-      order: "navOrders",
-    };
+    const map = { orders:"navOrders", products:"navProducts", ops:"navOps", logs:"navLogs", order:"navOrders" };
     ["navOrders","navProducts","navOps","navLogs"].forEach(id => $(id).classList.remove("active"));
     $(map[active] || "navOrders").classList.add("active");
   }
@@ -260,13 +260,11 @@
 
   function renderOrdersPage() {
     $("ordersCount").textContent = `Всего заказов: ${state.orders.length}`;
-
     const tbody = $("ordersTbody");
     tbody.innerHTML = "";
 
     for (const o of state.orders) {
       const tr = document.createElement("tr");
-
       tr.innerHTML = `
         <td>${o.orderDate}</td>
         <td>${o.customerName}</td>
@@ -291,33 +289,25 @@
           const r = await api(`/api/orders/${o.id}`, { method: "DELETE" });
           setDebug(r);
           toast("Заказ удалён");
-          await refreshCore();
-          renderOrdersPage();
+          await route();
         } catch (e) { toast(e.message); setDebug({ error: e.message }); }
       };
 
       act.appendChild(openBtn);
       act.appendChild(delBtn);
       tdAct.appendChild(act);
-
       tbody.appendChild(tr);
     }
   }
 
   function renderProductsPage() {
     const wrap = $("productsWrap");
-    const rows = state.products.map(p => `
-      <tr>
-        <td>${p.name}</td>
-        <td>${shortId(p.id)}</td>
-        <td>${p.stock}</td>
-      </tr>
-    `).join("");
-
     wrap.innerHTML = `
       <table>
         <thead><tr><th>Товар</th><th>ID</th><th>Остаток</th></tr></thead>
-        <tbody>${rows}</tbody>
+        <tbody>
+          ${state.products.map(p => `<tr><td>${p.name}</td><td>${shortId(p.id)}</td><td>${p.stock}</td></tr>`).join("")}
+        </tbody>
       </table>
     `;
   }
@@ -349,8 +339,8 @@
 
     wrap.innerHTML = order.items.map(item => {
       const productOptions = state.products.map(p => {
-        const sel = p.id === item.productId ? "selected" : "";
-        return `<option value="${p.id}" ${sel}>${p.name} (ост: ${p.stock})</option>`;
+        const s = p.id === item.productId ? "selected" : "";
+        return `<option value="${p.id}" ${s}>${p.name} (ост: ${p.stock})</option>`;
       }).join("");
 
       const moveOptions = otherOrders.map(o => `<option value="${o.id}">${o.orderDate} — ${o.customerName} (${shortId(o.id)})</option>`).join("");
@@ -404,7 +394,8 @@
           });
           setDebug(updated);
           toast("Позиция обновлена");
-          await refreshCore();
+          await loadProducts();
+          await loadOrders();
           await loadOrder(order.id);
           renderOrderPage();
         } catch (e) { toast(e.message); setDebug({ error: e.message }); }
@@ -415,12 +406,12 @@
       btn.onclick = async () => {
         const itemId = btn.dataset.item;
         if (!confirm("Удалить позицию?")) return;
-
         try {
           const updated = await api(`/api/orders/${order.id}/items/${itemId}`, { method: "DELETE" });
           setDebug(updated);
           toast("Позиция удалена");
-          await refreshCore();
+          await loadProducts();
+          await loadOrders();
           await loadOrder(order.id);
           renderOrderPage();
         } catch (e) { toast(e.message); setDebug({ error: e.message }); }
@@ -446,12 +437,6 @@
     });
   }
 
-  async function refreshCore() {
-    await loadMeta();
-    await loadProducts();
-    await loadOrders();
-  }
-
   async function route() {
     const hash = location.hash || "#/orders";
     const parts = hash.replace(/^#\//, "").split("/");
@@ -459,8 +444,8 @@
 
     try {
       await refreshCore();
-      renderNav(page === "order" ? "order" : page);
 
+      renderNav(page === "order" ? "order" : page);
       hideAllPages();
 
       if (page === "orders") {
@@ -490,9 +475,7 @@
       if (page === "order") {
         const orderId = parts[1];
         if (!orderId) { location.hash = "#/orders"; return; }
-
         await loadOrder(orderId);
-
         $("pageOrder").style.display = "block";
         renderOrderPage();
         return;
@@ -528,7 +511,6 @@
     if (!order) return;
     const customerName = $("editCustomer").value.trim();
     const orderDate = $("editDate").value.trim();
-
     try {
       const updated = await api(`/api/orders/${order.id}`, {
         method: "PUT",
@@ -544,7 +526,6 @@
     const order = state.selectedOrder;
     if (!order) return;
     if (!confirm("Удалить заказ?")) return;
-
     try {
       const r = await api(`/api/orders/${order.id}`, { method: "DELETE" });
       setDebug(r);
@@ -558,7 +539,6 @@
     if (!order) return;
     const productId = $("addProduct").value;
     const qty = Number($("addQty").value);
-
     try {
       const updated = await api(`/api/orders/${order.id}/items`, {
         method: "POST",
@@ -566,7 +546,8 @@
       });
       setDebug(updated);
       toast("Позиция добавлена");
-      await refreshCore();
+      await loadProducts();
+      await loadOrders();
       await loadOrder(order.id);
       renderOrderPage();
     } catch (e) { toast(e.message); setDebug({ error: e.message }); }
@@ -576,9 +557,34 @@
     if (!confirm("Переключить текущую дату на день вперёд?\nЗаказы на текущий день будут отгружены и удалены.")) return;
     try {
       const r = await api("/api/meta/advance-day", { method: "POST" });
+
+      // жёстко обновляем UI датой из ответа
+      state.currentDate = r.currentDate;
+      $("currentDatePill").textContent = "Текущая дата: " + state.currentDate;
+      $("newDate").value = state.currentDate;
+
       setOps(r);
       setDebug(r);
       toast(`День: ${r.previousDate} → ${r.currentDate}. Отгружено заказов: ${r.shippedOrdersCount}`);
+
+      location.hash = "#/ops";
+      await route();
+    } catch (e) { toast(e.message); setDebug({ error: e.message }); }
+  };
+
+  $("resetTodayBtn").onclick = async () => {
+    if (!confirm("Сбросить текущую дату приложения на сегодняшнюю?\n(Просроченные заказы будут удалены.)")) return;
+    try {
+      const r = await api("/api/meta/reset-today", { method: "POST" });
+
+      state.currentDate = r.currentDate;
+      $("currentDatePill").textContent = "Текущая дата: " + state.currentDate;
+      $("newDate").value = state.currentDate;
+
+      setOps(r);
+      setDebug(r);
+      toast(`Дата: ${r.previousDate} → ${r.currentDate}`);
+
       location.hash = "#/ops";
       await route();
     } catch (e) { toast(e.message); setDebug({ error: e.message }); }

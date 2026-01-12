@@ -15,13 +15,22 @@ function isISODate(s) {
   return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
 }
 
+function todayISO() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 function addDaysISO(dateStr, days) {
-  const d = new Date(dateStr + "T00:00:00Z");
-  d.setUTCDate(d.getUTCDate() + days);
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  return `${y}-${m}-${dd}`;
+  // Стабильно двигаем день за днём через UTC-полночь
+  const dt = new Date(dateStr + "T00:00:00Z");
+  dt.setUTCDate(dt.getUTCDate() + days);
+  const y = dt.getUTCFullYear();
+  const m = String(dt.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(dt.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
 }
 
 class HttpError extends Error {
@@ -35,6 +44,7 @@ class HttpError extends Error {
 function openDb(file = "warehouse.db") {
   const db = new Database(file);
   db.pragma("foreign_keys = ON");
+  db.pragma("busy_timeout = 5000");
   return db;
 }
 
@@ -71,8 +81,9 @@ function createRepo(db) {
   `);
 
   const st = {
-    metaGet: db.prepare(`SELECT current_date AS currentDate FROM meta WHERE id=1`),
-    metaSet: db.prepare(`INSERT INTO meta(id, current_date) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET current_date=excluded.current_date`),
+    // ВАЖНО: экранируем "current_date", иначе SQLite вернёт встроенный CURRENT_DATE
+    metaGet: db.prepare(`SELECT "current_date" AS currentDate FROM meta WHERE id=1`),
+    metaSet: db.prepare(`INSERT OR REPLACE INTO meta(id, "current_date") VALUES(1, ?)`),
 
     productsCount: db.prepare(`SELECT COUNT(*) AS c FROM products`),
     productList: db.prepare(`SELECT id, name, stock FROM products ORDER BY name`),
@@ -82,7 +93,9 @@ function createRepo(db) {
     productInsert: db.prepare(`INSERT INTO products(id, name, stock) VALUES(?, ?, ?)`),
 
     ordersList: db.prepare(`
-      SELECT o.id, o.customer_name AS customerName, o.order_date AS orderDate,
+      SELECT o.id,
+             o.customer_name AS customerName,
+             o.order_date AS orderDate,
              (SELECT COUNT(*) FROM order_items i WHERE i.order_id=o.id) AS itemsCount
       FROM orders o
       ORDER BY o.order_date, o.customer_name
@@ -93,7 +106,10 @@ function createRepo(db) {
     orderDelete: db.prepare(`DELETE FROM orders WHERE id=?`),
 
     itemsByOrder: db.prepare(`
-      SELECT i.id, i.order_id AS orderId, i.product_id AS productId, i.qty,
+      SELECT i.id,
+             i.order_id AS orderId,
+             i.product_id AS productId,
+             i.qty,
              p.name AS productName
       FROM order_items i
       JOIN products p ON p.id = i.product_id
@@ -113,7 +129,8 @@ function createRepo(db) {
 
     ordersForDate: db.prepare(`SELECT id FROM orders WHERE order_date=?`),
     shipSumsForDate: db.prepare(`
-      SELECT oi.product_id AS productId, SUM(oi.qty) AS totalQty
+      SELECT oi.product_id AS productId,
+             SUM(oi.qty) AS totalQty
       FROM order_items oi
       WHERE oi.order_id IN (SELECT id FROM orders WHERE order_date=?)
       GROUP BY oi.product_id
@@ -121,19 +138,14 @@ function createRepo(db) {
     deleteOrdersForDate: db.prepare(`DELETE FROM orders WHERE order_date=?`),
   };
 
-  function getCurrentDate() {
-    const row = st.metaGet.get();
-    return row?.currentDate || null;
+  function getCurrentDateRaw() {
+    return st.metaGet.get()?.currentDate ?? null;
   }
 
   function ensureMeta() {
-    let cd = getCurrentDate();
+    let cd = getCurrentDateRaw();
     if (!cd) {
-      const now = new Date();
-      const y = now.getUTCFullYear();
-      const m = String(now.getUTCMonth() + 1).padStart(2, "0");
-      const d = String(now.getUTCDate()).padStart(2, "0");
-      cd = `${y}-${m}-${d}`;
+      cd = todayISO();
       st.metaSet.run(cd);
     }
     return cd;
@@ -154,10 +166,9 @@ function createRepo(db) {
       { name: "Переходник HDMI", stock: 16 },
     ];
 
-    const tx = db.transaction(() => {
+    db.transaction(() => {
       for (const p of seed) st.productInsert.run(uuid(), p.name, p.stock);
-    });
-    tx();
+    })();
   }
 
   function init() {
@@ -183,7 +194,7 @@ function createRepo(db) {
   }
 
   function assertOrderDateNotPast(orderDate) {
-    const cd = getCurrentDate();
+    const cd = ensureMeta();
     if (!isISODate(orderDate)) throw new HttpError(400, "Некорректный формат даты (нужно YYYY-MM-DD)");
     if (orderDate < cd) throw new HttpError(409, "Дата заказа не может быть меньше текущей даты", { currentDate: cd });
   }
@@ -219,8 +230,9 @@ function createRepo(db) {
   }
 
   function reservedSum(productId, excludeItemId = null) {
-    if (excludeItemId) return st.reservedSumExcluding.get(productId, excludeItemId).s;
-    return st.reservedSum.get(productId).s;
+    return excludeItemId
+      ? st.reservedSumExcluding.get(productId, excludeItemId).s
+      : st.reservedSum.get(productId).s;
   }
 
   function checkAvailabilityOrThrow(productId, requestedQty, excludeItemId = null) {
@@ -242,124 +254,140 @@ function createRepo(db) {
     }
   }
 
-  const txAddItem = db.transaction((orderId, productId, qty) => {
-    const order = st.orderGet.get(orderId);
-    if (!order) throw new HttpError(404, "Заказ не найден");
-    if (!Number.isInteger(qty) || qty < 1) throw new HttpError(400, "Количество должно быть целым числом >= 1");
-
-    checkAvailabilityOrThrow(productId, qty, null);
-
-    const id = uuid();
-    st.itemInsert.run(id, orderId, productId, qty);
-    return getOrderWithItems(orderId);
-  });
-
   function addItem(orderId, { productId, qty }) {
-    return txAddItem(orderId, productId, qty);
+    return db.transaction(() => {
+      const order = st.orderGet.get(orderId);
+      if (!order) throw new HttpError(404, "Заказ не найден");
+      if (!Number.isInteger(qty) || qty < 1) throw new HttpError(400, "Количество должно быть целым числом >= 1");
+
+      checkAvailabilityOrThrow(productId, qty, null);
+
+      const id = uuid();
+      st.itemInsert.run(id, orderId, productId, qty);
+      return getOrderWithItems(orderId);
+    })();
   }
 
-  const txUpdateItem = db.transaction((orderId, itemId, productId, qty) => {
-    const order = st.orderGet.get(orderId);
-    if (!order) throw new HttpError(404, "Заказ не найден");
+  function updateItem(orderId, itemId, { productId, qty }) {
+    return db.transaction(() => {
+      const order = st.orderGet.get(orderId);
+      if (!order) throw new HttpError(404, "Заказ не найден");
 
-    const item = st.itemGet.get(itemId);
-    if (!item || item.orderId !== orderId) throw new HttpError(404, "Позиция заказа не найдена");
+      const item = st.itemGet.get(itemId);
+      if (!item || item.orderId !== orderId) throw new HttpError(404, "Позиция заказа не найдена");
 
-    const newQty = qty ?? item.qty;
-    const newProductId = productId ?? item.productId;
+      const newQty = qty ?? item.qty;
+      const newProductId = productId ?? item.productId;
 
-    if (!Number.isInteger(newQty) || newQty < 1) throw new HttpError(400, "Количество должно быть целым числом >= 1");
+      if (!Number.isInteger(newQty) || newQty < 1) throw new HttpError(400, "Количество должно быть целым числом >= 1");
 
-    checkAvailabilityOrThrow(newProductId, newQty, itemId);
+      checkAvailabilityOrThrow(newProductId, newQty, itemId);
 
-    st.itemUpdate.run(newProductId, newQty, itemId);
-    return getOrderWithItems(orderId);
-  });
-
-  function updateItem(orderId, itemId, payload) {
-    return txUpdateItem(orderId, itemId, payload.productId, payload.qty);
+      st.itemUpdate.run(newProductId, newQty, itemId);
+      return getOrderWithItems(orderId);
+    })();
   }
-
-  const txDeleteItem = db.transaction((orderId, itemId) => {
-    const order = st.orderGet.get(orderId);
-    if (!order) throw new HttpError(404, "Заказ не найден");
-
-    const item = st.itemGet.get(itemId);
-    if (!item || item.orderId !== orderId) throw new HttpError(404, "Позиция заказа не найдена");
-
-    st.itemDelete.run(itemId);
-    return getOrderWithItems(orderId);
-  });
 
   function deleteItem(orderId, itemId) {
-    return txDeleteItem(orderId, itemId);
+    return db.transaction(() => {
+      const order = st.orderGet.get(orderId);
+      if (!order) throw new HttpError(404, "Заказ не найден");
+
+      const item = st.itemGet.get(itemId);
+      if (!item || item.orderId !== orderId) throw new HttpError(404, "Позиция заказа не найдена");
+
+      st.itemDelete.run(itemId);
+      return getOrderWithItems(orderId);
+    })();
   }
-
-  const txMoveItem = db.transaction((itemId, toOrderId) => {
-    const item = st.itemGet.get(itemId);
-    if (!item) throw new HttpError(404, "Позиция заказа не найдена");
-
-    const toOrder = st.orderGet.get(toOrderId);
-    if (!toOrder) throw new HttpError(404, "Целевой заказ не найден");
-
-    st.itemUpdateOrder.run(toOrderId, itemId);
-    return getOrderWithItems(toOrderId);
-  });
 
   function moveItem(itemId, { toOrderId }) {
     if (!toOrderId || typeof toOrderId !== "string") throw new HttpError(400, "toOrderId обязателен");
-    return txMoveItem(itemId, toOrderId);
+
+    return db.transaction(() => {
+      const item = st.itemGet.get(itemId);
+      if (!item) throw new HttpError(404, "Позиция заказа не найдена");
+
+      const toOrder = st.orderGet.get(toOrderId);
+      if (!toOrder) throw new HttpError(404, "Целевой заказ не найден");
+
+      st.itemUpdateOrder.run(toOrderId, itemId);
+      return getOrderWithItems(toOrderId);
+    })();
   }
 
-  const txAdvanceDay = db.transaction(() => {
-    const currentDate = ensureMeta();
-
-    const ship = st.shipSumsForDate.all(currentDate);
-
-    for (const row of ship) {
-      const p = st.productGet.get(row.productId);
-      if (!p) continue;
-      const newStock = p.stock - row.totalQty;
-
-      if (newStock < 0) {
-        throw new HttpError(500, "Отрицательный остаток при отгрузке (проверь логику резерва)", {
-          productId: row.productId,
-          stock: p.stock,
-          shipQty: row.totalQty,
-        });
-      }
-      st.productUpdateStock.run(newStock, row.productId);
-    }
-
-    const ordersToday = st.ordersForDate.all(currentDate);
-    st.deleteOrdersForDate.run(currentDate);
-
-    const arrivals = {};
-    const products = st.productList.all();
-    for (const p of products) {
-      const delta = Math.floor(Math.random() * 6);
-      if (delta > 0) {
-        st.productIncStock.run(delta, p.id);
-        arrivals[p.id] = delta;
-      }
-    }
-
-    const newDate = addDaysISO(currentDate, 1);
-    st.metaSet.run(newDate);
-
-    st.deleteExpiredOrders.run(newDate);
-
-    return {
-      previousDate: currentDate,
-      currentDate: newDate,
-      shippedOrdersCount: ordersToday.length,
-      shippedProducts: ship,
-      arrivals,
-    };
-  });
-
   function advanceDay() {
-    return txAdvanceDay();
+    return db.transaction(() => {
+      const currentDate = ensureMeta();
+
+      // списание по заказам текущей даты
+      const ship = st.shipSumsForDate.all(currentDate);
+      for (const row of ship) {
+        const p = st.productGet.get(row.productId);
+        if (!p) continue;
+        const newStock = p.stock - row.totalQty;
+        if (newStock < 0) {
+          throw new HttpError(500, "Отрицательный остаток при отгрузке", {
+            productId: row.productId,
+            stock: p.stock,
+            shipQty: row.totalQty,
+          });
+        }
+        st.productUpdateStock.run(newStock, row.productId);
+      }
+
+      // удаляем заказы "сегодня" (с позициями каскадом)
+      const ordersToday = st.ordersForDate.all(currentDate);
+      st.deleteOrdersForDate.run(currentDate);
+
+      // случайный приход
+      const arrivals = {};
+      for (const p of st.productList.all()) {
+        const delta = Math.floor(Math.random() * 6); // 0..5
+        if (delta > 0) {
+          st.productIncStock.run(delta, p.id);
+          arrivals[p.id] = delta;
+        }
+      }
+
+      // новая дата
+      const newDate = addDaysISO(currentDate, 1);
+      st.metaSet.run(newDate);
+
+      // удаляем просроченные заказы относительно новой даты
+      st.deleteExpiredOrders.run(newDate);
+
+      // проверка
+      const after = st.metaGet.get()?.currentDate;
+      if (after !== newDate) {
+        throw new HttpError(500, "Не удалось сохранить текущую дату", { expected: newDate, actual: after });
+      }
+
+      return {
+        previousDate: currentDate,
+        currentDate: newDate,
+        shippedOrdersCount: ordersToday.length,
+        shippedProducts: ship,
+        arrivals,
+      };
+    })();
+  }
+
+  function resetToToday() {
+    return db.transaction(() => {
+      const previousDate = ensureMeta();
+      const today = todayISO();
+
+      st.metaSet.run(today);
+      st.deleteExpiredOrders.run(today);
+
+      const after = st.metaGet.get()?.currentDate;
+      if (after !== today) {
+        throw new HttpError(500, "Не удалось сбросить дату на сегодняшнюю", { expected: today, actual: after });
+      }
+
+      return { previousDate, currentDate: today };
+    })();
   }
 
   return {
@@ -377,6 +405,7 @@ function createRepo(db) {
     deleteItem,
     moveItem,
     advanceDay,
+    resetToToday,
   };
 }
 
